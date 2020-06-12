@@ -38,6 +38,8 @@
     rustcSrc = callPackage ./rust-src.nix {
       inherit rustc;
     };
+
+    libstd = callPackage ./libstd.nix {};
   };
 
   # This just contains tools for now. But it would conceivably contain
@@ -93,6 +95,7 @@
       };
       clippy = self.callPackage ./clippy.nix { inherit Security; };
       rls = self.callPackage ./rls { inherit CoreFoundation Security; };
+      libstd-wasm32 = self.rustPlatform.libstd "wasm32-unknown-unknown";
     });
   };
 }
