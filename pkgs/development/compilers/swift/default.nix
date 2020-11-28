@@ -32,6 +32,8 @@
 , makeWrapper
 , gnumake
 , file
+, darwin
+, xcbuild
 }:
 
 let
@@ -107,23 +109,27 @@ let
 
   devInputs = [
     curl
-    glibc
     icu
     libblocksruntime
     libbsd
     libedit
-    libuuid
     libxml2
     ncurses
     sqlite
     swig
-  ];
+  ]
+    ++ stdenv.lib.optionals stdenv.isLinux [
+      glibc
+      libuuid
+    ];
 
   cmakeFlags = [
-    "-DGLIBC_INCLUDE_PATH=${stdenv.cc.libc.dev}/include"
     "-DC_INCLUDE_DIRS=${stdenv.lib.makeSearchPathOutput "dev" "include" devInputs}:${libxml2.dev}/include/libxml2"
     "-DGCC_INSTALL_PREFIX=${gccForLibs}"
-  ];
+  ]
+    ++ stdenv.lib.optionals stdenv.isLinux [
+      "-DGLIBC_INCLUDE_PATH=${stdenv.cc.libc.dev}/include"
+    ];
 
 in
 stdenv.mkDerivation {
@@ -137,7 +143,6 @@ stdenv.mkDerivation {
     coreutils
     findutils
     gnumake
-    libtool
     makeWrapper
     ninja
     perl
@@ -145,10 +150,18 @@ stdenv.mkDerivation {
     python
     rsync
     which
-  ];
-  buildInputs = devInputs ++ [
-    clang
-  ];
+  ]
+    ++ (stdenv.lib.optionals stdenv.isLinux [
+      libtool
+    ])
+    ++ (stdenv.lib.optionals stdenv.isDarwin [
+      xcbuild clang darwin.cctools darwin.PowerManagement
+    ]);
+
+  buildInputs = devInputs
+    ++ (stdenv.lib.optionals stdenv.isLinux [
+      clang
+    ]);
 
   # TODO: Revisit what's propagated and how
   propagatedBuildInputs = [
@@ -198,7 +211,7 @@ stdenv.mkDerivation {
       -e 's|/usr/bin/file|${file}/bin/file|g'
 
     substituteInPlace swift/stdlib/public/Platform/CMakeLists.txt \
-      --replace '/usr/include' "${stdenv.cc.libc.dev}/include"
+      --replace '/usr/include' "${stdenv.cc.libc_dev}/include"
     substituteInPlace swift/utils/build-script-impl \
       --replace '/usr/include/c++' "${gccForLibs}/include/c++"
     patch -p1 -d swift -i ${./patches/glibc-arch-headers.patch}
@@ -206,6 +219,8 @@ stdenv.mkDerivation {
     patch -p1 -d swift -i ${./patches/0002-build-presets-linux-allow-custom-install-prefix.patch}
     patch -p1 -d swift -i ${./patches/0003-build-presets-linux-don-t-build-extra-libs.patch}
     patch -p1 -d swift -i ${./patches/0004-build-presets-linux-plumb-extra-cmake-options.patch}
+    patch -p1 -d swift -i ${./patches/swift-darwin-sandbox.patch}
+    patch -p1 -d swift -i ${./patches/swift-nix-toolchain.patch}
 
     sed -i swift/utils/build-presets.ini \
       -e 's/^test-installable-package$/# \0/' \
@@ -217,17 +232,22 @@ stdenv.mkDerivation {
       \
       -e 's/^swift-install-components=autolink.*$/\0;editor-integration/'
 
+    ${stdenv.lib.optionalString stdenv.isLinux ''
     substituteInPlace clang/lib/Driver/ToolChains/Linux.cpp \
       --replace 'SysRoot + "/lib' '"${glibc}/lib" "'
     substituteInPlace clang/lib/Driver/ToolChains/Linux.cpp \
       --replace 'SysRoot + "/usr/lib' '"${glibc}/lib" "'
+    ''}
     patch -p1 -d clang -i ${./patches/llvm-toolchain-dir.patch}
     patch -p1 -d clang -i ${./purity.patch}
 
     # Workaround hardcoded dep on "libcurses" (vs "libncurses"):
     sed -i 's/curses/ncurses/' llbuild/*/*/CMakeLists.txt
+
     # uuid.h is not part of glibc, but of libuuid
+    ${stdenv.lib.optionalString (libuuid != null) ''
     sed -i 's|''${GLIBC_INCLUDE_PATH}/uuid/uuid.h|${libuuid.dev}/include/uuid/uuid.h|' swift/stdlib/public/Platform/glibc.modulemap.gyb
+    ''}
 
     # Compatibility with glibc 2.30
     # Adapted from https://github.com/apple/swift-package-manager/pull/2408
@@ -295,7 +315,10 @@ stdenv.mkDerivation {
     rm $SWIFT_SOURCE_ROOT/swift/validation-test/Python/build_swift.swift  # install_prefix not passed properly
 
     # match the swift wrapper in the install phase
-    export LIBRARY_PATH=${icu}/lib:${libuuid.out}/lib
+    export LIBRARY_PATH=${icu}/lib
+    ${stdenv.lib.optionalString (libuuid != null) ''
+    export LIBRARY_PATH=${libuuid.out}/lib:$LIBRARY_PATH
+    ''}
 
     checkTarget=check-swift-all
     ninjaFlags='-C buildbot_linux/swift-${stdenv.hostPlatform.parsed.kernel.name}-${stdenv.hostPlatform.parsed.cpu.name}'
@@ -314,10 +337,15 @@ stdenv.mkDerivation {
     rmdir $out/local/include $out/local
     rm -r $out/bin/sdk-module-lists $out/bin/swift-api-checker.py
 
+    export LIBRARY_PATH=${icu}/lib
+    ${stdenv.lib.optionalString (libuuid != null) ''
+    export LIBRARY_PATH=${libuuid.out}/lib:$LIBRARY_PATH
+    ''}
+
     wrapProgram $out/bin/swift \
       --suffix C_INCLUDE_PATH : $out/lib/swift/clang/include \
       --suffix CPLUS_INCLUDE_PATH : $out/lib/swift/clang/include \
-      --suffix LIBRARY_PATH : ${icu}/lib:${libuuid.out}/lib
+      --suffix LIBRARY_PATH : $LIBRARY_PATH
   '';
 
   # Hack to avoid build and install directories in RPATHs.
@@ -329,7 +357,7 @@ stdenv.mkDerivation {
     maintainers = with maintainers; [ dtzWill ];
     license = licenses.asl20;
     # Swift doesn't support 32bit Linux, unknown on other platforms.
-    platforms = platforms.linux;
+    platforms = platforms.linux ++ platforms.darwin;
     badPlatforms = platforms.i686;
     broken = stdenv.isAarch64; # 2018-09-04, never built on Hydra
   };

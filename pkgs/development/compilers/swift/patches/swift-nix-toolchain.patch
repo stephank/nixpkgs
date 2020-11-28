@@ -1,0 +1,30 @@
+Force PATH lookup of toolchain on all platforms
+
+--- a/utils/swift_build_support/swift_build_support/toolchain.py
++++ b/utils/swift_build_support/swift_build_support/toolchain.py
+@@ -16,6 +16,7 @@ Represent toolchain - the versioned executables.
+ 
+ from __future__ import absolute_import
+ 
++import os
+ import platform
+ 
+ from . import cache_util
+@@ -192,9 +193,16 @@ class Haiku(GenericUnix):
+         super(Haiku, self)
+ 
+ 
++class Nix(GenericUnix):
++    def __init__(self):
++        super(Nix, self).__init__([''])
++
++
+ def host_toolchain(**kwargs):
+     sys = platform.system()
+-    if sys == 'Darwin':
++    if 'NIX_BUILD_TOP' in os.environ:
++        return Nix()
++    elif sys == 'Darwin':
+         return MacOSX(kwargs.pop('xcrun_toolchain', 'default'))
+     elif sys == 'Linux':
+         return Linux()

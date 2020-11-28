@@ -1,0 +1,21 @@
+Disable Darwin build-time checks broken within the sandbox
+
+--- a/utils/swift_build_support/swift_build_support/host.py
++++ b/utils/swift_build_support/swift_build_support/host.py
+@@ -44,7 +44,6 @@ def _darwin_system_memory():
+ 
+ 
+ _PER_PLATFORM_SYSTEM_MEMORY = {
+-    ('Darwin', 'x86_64'): _darwin_system_memory
+ }
+ 
+ 
+@@ -79,8 +78,6 @@ def _darwin_max_num_swift_parallel_lto_link_jobs():
+ 
+ 
+ _PER_PLATFORM_MAX_PARALLEL_LTO_JOBS = {
+-    ('Darwin', 'x86_64'): (_darwin_max_num_llvm_parallel_lto_link_jobs,
+-                           _darwin_max_num_swift_parallel_lto_link_jobs)
+ }
+ 
+ 
