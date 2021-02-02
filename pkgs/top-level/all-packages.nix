@@ -12705,6 +12705,8 @@ in
 
   schemaspy = callPackage ../development/tools/database/schemaspy { };
 
+  sentry-cli = callPackage ../development/tools/sentry-cli { };
+
   shncpd = callPackage ../tools/networking/shncpd { };
 
   sigrok-cli = callPackage ../development/tools/sigrok-cli { };
