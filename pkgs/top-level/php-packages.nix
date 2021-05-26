@@ -271,19 +271,13 @@ lib.makeScope pkgs.newScope (self: with self; {
       { name = "dom";
         buildInputs = [ libxml2 ];
         patches = [
-          # https://github.com/php/php-src/pull/7030
+          # For libxml2 2.9.12 compatibility.
+          # Remove on the next release after 7.4.19 and 8.0.6.
           (fetchpatch {
-            url = "https://github.com/php/php-src/commit/4cc261aa6afca2190b1b74de39c3caa462ec6f0b.patch";
-            sha256 = "11qsdiwj1zmpfc2pgh6nr0sn7qa1nyjg4jwf69cgwnd57qfjcy4k";
-            excludes = [ "ext/dom/tests/bug43364.phpt" "ext/dom/tests/bug80268.phpt" ];
+            url = "https://github.com/php/php-src/commit/f3d1e9ed0626b6ed4341dc4d16b12c85e00ab7d9.patch";
+            sha256 = "1h6k7z55fg9jjgk8ibi5p7h0zvpn5a2jgkzp80hn4s68wanlw3g8";
           })
         ];
-        # For some reason `patch` fails to remove these files correctly.
-        # Since `postPatch` is already used in `mkExtension`, we have to make it here.
-        preCheck = ''
-          rm tests/bug43364.phpt
-          rm tests/bug80268.phpt
-        '';
         configureFlags = [ "--enable-dom" ]
           # Required to build on darwin.
           ++ lib.optionals (lib.versionOlder php.version "7.4") [ "--with-libxml-dir=${libxml2.dev}" ]; }
