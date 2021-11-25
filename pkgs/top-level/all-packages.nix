@@ -13549,7 +13549,7 @@ with pkgs;
   # PHP interpreters, packages and extensions.
   #
   # Set default PHP interpreter, extensions and packages
-  php = php81;
+  php = php80;
   phpExtensions = php.extensions;
   phpPackages = php.packages;
 
