@@ -65,7 +65,7 @@
 , sdl2Support        ? true,           SDL2
 , sixelSupport       ? false,          libsixel
 , speexSupport       ? true,           speex
-, swiftSupport       ? false,          swift
+, swiftSupport       ? stdenv.isDarwin, swift, xcbuild
 , theoraSupport      ? true,           libtheora
 , vaapiSupport       ? stdenv.isLinux, libva
 , vapoursynthSupport ? false,          vapoursynth
@@ -100,6 +100,11 @@ in stdenv.mkDerivation rec {
   NIX_LDFLAGS = lib.optionalString x11Support "-lX11 -lXext "
     + lib.optionalString stdenv.isDarwin "-framework CoreFoundation";
 
+  preConfigure = lib.optionalString swiftSupport ''
+    # Ensure we reference 'lib' (not 'out') of Swift.
+    export SWIFT_LIB_DYNAMIC=${swift.swift.lib}/lib/swift/macosx
+  '';
+
   # These flags are not supported and cause the build
   # to fail, even when cross compilation itself works.
   dontAddWafCrossFlags = true;
@@ -120,8 +125,7 @@ in stdenv.mkDerivation rec {
     (lib.enableFeature vaapiSupport    "vaapi")
     (lib.enableFeature waylandSupport  "wayland")
     (lib.enableFeature stdenv.isLinux  "dvbin")
-  ] # Disable whilst Swift isn't supported
-    ++ lib.optional (!swiftSupport) "--disable-macos-cocoa-cb";
+  ] ++ lib.optional (!swiftSupport) "--disable-macos-cocoa-cb";
 
   nativeBuildInputs = [
     addOpenGLRunpath
@@ -131,7 +135,7 @@ in stdenv.mkDerivation rec {
     python3
     wafHook
     which
-  ] ++ lib.optionals swiftSupport [ swift ]
+  ] ++ lib.optionals swiftSupport [ swift xcbuild.xcrun ]
     ++ lib.optionals waylandSupport [ wayland-scanner ];
 
   buildInputs = [

@@ -1,7 +1,7 @@
 { frameworks, libs, libobjc, libnetwork }: with frameworks; with libs;
 {
   AGL                              = { inherit Carbon OpenGL; };
-  AVFoundation                     = { inherit ApplicationServices AVFCapture AVFCore CoreGraphics simd UniformTypeIdentifiers; };
+  AVFoundation                     = { inherit ApplicationServices AVFCapture AVFCore CoreGraphics CoreMedia simd UniformTypeIdentifiers; };
   AVKit                            = {};
   Accelerate                       = { inherit CoreWLAN IOBluetooth; };
   Accessibility                    = {};
@@ -112,7 +112,7 @@
   MapKit                           = {};
   MediaAccessibility               = { inherit CoreGraphics CoreText QuartzCore; };
   MediaLibrary                     = {};
-  MediaPlayer                      = {};
+  MediaPlayer                      = { inherit AVFoundation; };
   MediaToolbox                     = { inherit AudioToolbox AudioUnit CoreMedia; };
   Message                          = {};
   Metal                            = {};
