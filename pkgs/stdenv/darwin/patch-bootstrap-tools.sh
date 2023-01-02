@@ -1,18 +1,9 @@
 set -euo pipefail
 
-# Unpack the bootstrap tools tarball.
-echo Unpacking the bootstrap tools...
-$mkdir $out
-$bzip2 -d < $tarball | (cd $out && $cpio -i)
+export PATH=$tools/bin
 
-export PATH=$out/bin
-
-# Fix codesign wrapper paths
-sed -i \
-  -e "1c\
-#!$out/bin/bash" \
-  -e "s|[^( ]*\bsigtool\b|$out/bin/sigtool|g" \
-  $out/bin/codesign
+cp -R $tools $out
+chmod -R u+w $out
 
 updateInstallName() {
   local path="$1"
@@ -22,11 +13,6 @@ updateInstallName() {
   codesign -f -i "$(basename "$path")" -s - "$path.new"
   mv -f "$path.new" "$path"
 }
-
-find $out
-
-ln -s bash $out/bin/sh
-ln -s bzip2 $out/bin/bunzip2
 
 find $out/lib -type f -name '*.dylib' -print0 | while IFS= read -r -d $'\0' lib; do
   updateInstallName "$lib"
