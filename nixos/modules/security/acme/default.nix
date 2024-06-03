@@ -6,15 +6,48 @@ let
   cfg = config.security.acme;
   opt = options.security.acme;
   user = if cfg.useRoot then "root" else "acme";
+  defaultServer = "https://acme-v02.api.letsencrypt.org/directory";
 
   # Used to calculate timer accuracy for coalescing
   numCerts = length (builtins.attrNames cfg.certs);
   _24hSecs = 60 * 60 * 24;
 
   # Used to make unique paths for each cert/account config set
-  mkHash = with builtins; val: substring 0 20 (hashString "sha256" val);
-  mkAccountHash = acmeServer: data: mkHash "${toString acmeServer} ${data.keyType} ${data.email}";
-  accountDirRoot = "/var/lib/acme/.lego/accounts/";
+  # Flags are separated to avoid collisions
+  mkHashes = acmeServer: cert: data: extraDomains:
+    let
+      accountDirRoot = "/var/lib/acme/.lego/accounts/";
+      certDirRoot = "/var/lib/acme/.lego/${cert}/";
+      mkShortHash = with builtins; val: substring 0 20 (hashString "sha256" val);
+      mkAccountHash = acmeServer: data: mkShortHash "${toString acmeServer} ${data.keyType} ${data.email}";
+      hashData = with builtins; ''
+        ${concatStringsSep " " data.extraLegoFlags} -
+        ${concatStringsSep " " data.extraLegoRunFlags} -
+        ${concatStringsSep " " data.extraLegoRenewFlags} -
+        ${toString acmeServer} ${toString data.dnsProvider}
+        ${toString data.ocspMustStaple} ${data.keyType}
+      '';
+      # Server used to be null by default. Calculate old hashes for migration.
+      oldHashData = with builtins; ''
+        ${concatStringsSep " " data.extraLegoFlags} -
+        ${concatStringsSep " " data.extraLegoRunFlags} -
+        ${concatStringsSep " " data.extraLegoRenewFlags} -
+        ${toString null} ${toString data.dnsProvider}
+        ${toString data.ocspMustStaple} ${data.keyType}
+      '';
+    in rec {
+      certHash = mkShortHash hashData;
+      certDir = certDirRoot + certHash;
+      # TODO remove domainHash usage entirely. Waiting on go-acme/lego#1532
+      domainHash = mkShortHash "${concatStringsSep " " extraDomains} ${data.domain}";
+      accountHash = (mkAccountHash acmeServer data);
+      accountDir = accountDirRoot + accountHash;
+
+      oldCertHash = mkShortHash oldHashData;
+      oldCertDir = certDirRoot + oldCertHash;
+      oldAccountHash = (mkAccountHash null data);
+      oldAccountDir = accountDirRoot + oldAccountHash;
+    };
 
   lockdir = "/run/acme/";
   concurrencyLockfiles = map (n: "${toString n}.lock") (lib.range 1 cfg.maxConcurrentRenewals);
@@ -136,14 +169,34 @@ let
   migrationService = let
     script = with builtins; ''
       chown -R ${user} .lego/accounts
-    '' + (concatStringsSep "\n" (mapAttrsToList (cert: data: ''
-      for fixpath in ${escapeShellArg cert} .lego/${escapeShellArg cert}; do
-        if [ -d "$fixpath" ]; then
-          chmod -R u=rwX,g=rX,o= "$fixpath"
-          chown -R ${user}:${data.group} "$fixpath"
-        fi
-      done
-    '') certConfigs));
+    ''
+    + (concatStringsSep "\n" (mapAttrsToList
+      (cert: data:
+        let
+          mayMigrateOldHashes =
+            acmeServer == defaultServer
+            && (lib.versionOlder config.system.stateVersion "24.05");
+          inherit (mkHashes acmeServer cert data extraDomains)
+            certDir accountDir oldCertDir oldAccountDir;
+        in ''
+          for fixpath in ${escapeShellArg cert} .lego/${escapeShellArg cert}; do
+            if [ -d "$fixpath" ]; then
+              chmod -R u=rwX,g=rX,o= "$fixpath"
+              chown -R ${user}:${data.group} "$fixpath"
+            fi
+          done
+        ''
+        # Migrate old hashes, if necessary.
+        + lib.optionalString mayMigrateOldHashes ''
+          if [[ ! -e ${accountDir} && -e ${oldAccountDir} ]]; then
+            mv ${oldAccountDir} ${accountDir}
+          fi
+          if [[ ! -e ${certDir} && -e ${oldCertDir} ]]; then
+            mv ${oldCertDir} ${certDir}
+          fi
+        '')
+      certConfigs
+    ));
   in {
     description = "Performs migrations on the ACME state directory";
 
@@ -202,19 +255,8 @@ let
     );
 
     # Create hashes for cert data directories based on configuration
-    # Flags are separated to avoid collisions
-    hashData = with builtins; ''
-      ${concatStringsSep " " data.extraLegoFlags} -
-      ${concatStringsSep " " data.extraLegoRunFlags} -
-      ${concatStringsSep " " data.extraLegoRenewFlags} -
-      ${toString acmeServer} ${toString data.dnsProvider}
-      ${toString data.ocspMustStaple} ${data.keyType}
-    '';
-    certDir = mkHash hashData;
-    # TODO remove domainHash usage entirely. Waiting on go-acme/lego#1532
-    domainHash = mkHash "${concatStringsSep " " extraDomains} ${data.domain}";
-    accountHash = (mkAccountHash acmeServer data);
-    accountDir = accountDirRoot + accountHash;
+    inherit (mkHashes acmeServer cert data extraDomains)
+      certDir domainHash accountHash accountDir;
 
     protocolOpts = if useDns then (
       [ "--dns" data.dnsProvider ]
@@ -355,7 +397,7 @@ let
         StateDirectory = [
           "acme/${cert}"
           "acme/.lego/${cert}"
-          "acme/.lego/${cert}/${certDir}"
+          "acme/.lego/${cert}/${certHash}"
           "acme/.lego/accounts/${accountHash}"
         ];
 
@@ -364,8 +406,8 @@ let
         # Needs to be space separated, but can't use a multiline string because that'll include newlines
         BindPaths = [
           "${accountDir}:/tmp/accounts"
+          "${certDir}:/tmp/certificates"
           "/var/lib/acme/${cert}:/tmp/out"
-          "/var/lib/acme/.lego/${cert}/${certDir}:/tmp/certificates"
         ];
 
         EnvironmentFile = mkIf useDnsOrS3 data.environmentFile;
@@ -546,7 +588,7 @@ let
 
       server = mkOption {
         type = types.str;
-        inherit (defaultAndText "server" "https://acme-v02.api.letsencrypt.org/directory") default defaultText;
+        inherit (defaultAndText "server" defaultServer) default defaultText;
         example = "https://acme-staging-v02.api.letsencrypt.org/directory";
         description = ''
           ACME Directory Resource URI.
