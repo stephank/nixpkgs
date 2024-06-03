@@ -133,7 +133,7 @@ let
   # Ensures that directories which are shared across all certs
   # exist and have the correct user and group, since group
   # is configurable on a per-cert basis.
-  userMigrationService = let
+  migrationService = let
     script = with builtins; ''
       chown -R ${user} .lego/accounts
     '' + (concatStringsSep "\n" (mapAttrsToList (cert: data: ''
@@ -145,7 +145,7 @@ let
       done
     '') certConfigs));
   in {
-    description = "Fix owner and group of all ACME certificates";
+    description = "Performs migrations on the ACME state directory";
 
     serviceConfig = commonServiceConfig // {
       # We don't want this to run every time a renewal happens
@@ -158,7 +158,7 @@ let
       WorkingDirectory = "/var/lib/acme";
 
       # Run the start script as root
-      ExecStart = "+" + (pkgs.writeShellScript "acme-fixperms" script);
+      ExecStart = "+" + (pkgs.writeShellScript "acme-migration" script);
     };
   };
   lockfilePrepareService = {
@@ -286,8 +286,8 @@ let
 
     selfsignService = lockfileName: {
       description = "Generate self-signed certificate for ${cert}";
-      after = [ "acme-selfsigned-ca.service" "acme-fixperms.service" ] ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
-      requires = [ "acme-selfsigned-ca.service" "acme-fixperms.service" ] ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
+      after = [ "acme-selfsigned-ca.service" "acme-migration.service" ] ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
+      requires = [ "acme-selfsigned-ca.service" "acme-migration.service" ] ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
 
       path = with pkgs; [ minica ];
 
@@ -334,8 +334,8 @@ let
 
     renewService = lockfileName: {
       description = "Renew ACME certificate for ${cert}";
-      after = [ "network.target" "network-online.target" "acme-fixperms.service" "nss-lookup.target" ] ++ selfsignedDeps ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
-      wants = [ "network-online.target" "acme-fixperms.service" ] ++ selfsignedDeps ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
+      after = [ "network.target" "network-online.target" "acme-migration.service" "nss-lookup.target" ] ++ selfsignedDeps ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
+      wants = [ "network-online.target" "acme-migration.service" ] ++ selfsignedDeps ++ optional (cfg.maxConcurrentRenewals > 0) "acme-lockfiles.service";
 
       # https://github.com/NixOS/nixpkgs/pull/81371#issuecomment-605526099
       wantedBy = optionals (!config.boot.isContainer) [ "multi-user.target" ];
@@ -991,7 +991,7 @@ in {
           then roundRobinApplyAttrs selfsignServiceFunctions concurrencyLockfiles
           else mapAttrs (_: f: f null) selfsignServiceFunctions;
         in
-        { "acme-fixperms" = userMigrationService; }
+        { "acme-migration" = migrationService; }
         // (optionalAttrs (cfg.maxConcurrentRenewals > 0) {"acme-lockfiles" = lockfilePrepareService; })
         // renewServices
         // (optionalAttrs (cfg.preliminarySelfsigned) ({
